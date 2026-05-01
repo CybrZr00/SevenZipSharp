@@ -15,6 +15,7 @@
 */
 
 using System;
+using System.Diagnostics;
 using System.IO;
 
 namespace SevenZip
@@ -126,7 +127,7 @@ namespace SevenZip
             {
                 SpecialDetect(stream, 257, InArchiveFormat.Tar);
             }
-            catch (ArgumentException) {}            
+            catch (ArgumentException ex) { Debug.WriteLine($"[SevenZipSharp] TAR detection seek failed (stream too short): {ex.Message}"); }
             if (SpecialDetect(stream, 0x8001, InArchiveFormat.Iso))
             {
                 return InArchiveFormat.Iso;
@@ -229,7 +230,7 @@ namespace SevenZip
                     if (File.Exists(mainZipFilename))
                         fileName = mainZipFilename;
                 }
-                catch{}
+                catch (Exception ex) { Debug.WriteLine($"[SevenZipSharp] Multi-volume zip probe failed: {ex.Message}"); }
             }
             using (var fs = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
             {

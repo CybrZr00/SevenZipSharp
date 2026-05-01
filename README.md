@@ -1,7 +1,64 @@
 # SevenZipSharp
-This is a fork of [SevenZipSharp from Codeplex](https://sevenzipsharp.codeplex.com) by Codeplex user [markhor] (https://www.codeplex.com/site/users/view/markhor), with community sumbitted patches from the codeplex site up through Feb 25, 2015.  It also contains my own fixes/additions.  This project has by all accounts been abandoned, and Codeplex is no longer supporting svn access, therefore forking it seemed to be the right thing to do.
 
-The below is verbatim from the Codeplex site - I will update it a bit later.
+This is a fork of [SevenZipSharp from Codeplex](https://sevenzipsharp.codeplex.com) by Codeplex user [markhor](https://www.codeplex.com/site/users/view/markhor), with community-submitted patches from the CodePlex site up through Feb 25, 2015, plus subsequent fixes and the .NET 10 upgrade described below.
+
+---
+
+## Fork Changes
+
+### Platform target
+
+This fork targets **.NET 10** (SDK-style project, `net10.0-windows`). The old `.sln` and `.csproj` files targeting .NET 2.0–4.5 have been replaced with a single `SevenZipSharp.sln` and an SDK-style `SevenZip/SevenZip.csproj`.
+
+### Dropped sub-projects
+
+`SevenZipSharpMobile` (Windows Mobile / WinCE) and `SevenZipMono` have been removed. .NET 10's cross-platform runtime makes dedicated mobile/Mono forks unnecessary.
+
+### Breaking change — async API
+
+The old `BeginXxx`/`EndXxx` delegate-based async API has been replaced with standard `Task`-returning methods:
+
+| Old | New |
+|---|---|
+| `BeginCompressFiles(…)` | `CompressFilesAsync(…, CancellationToken)` |
+| `BeginExtractArchive(directory)` | `ExtractArchiveAsync(directory, CancellationToken)` |
+| `BeginExtractFile(index, stream)` | `ExtractFileAsync(index, stream, CancellationToken)` |
+| `BeginExtractFiles(directory, …)` | `ExtractFilesAsync(directory, …, CancellationToken)` |
+| … | … |
+
+All async wrappers marshal events back to the caller's `SynchronizationContext`.
+
+### Bug fixes
+
+- **XZ compression** — Fixed: creating `.xz` archives previously failed because 7z.dll requires the LZMA2 codec to be named explicitly via the `"0"` property when `SetProperties` is called. The codec is now set automatically when `OutArchiveFormat.XZ` is used with the default compression method.
+- **FLV and MSI format GUIDs** — Fixed: `InArchiveFormat.Flv` and `InArchiveFormat.Msi` were missing from the COM GUID lookup table, causing extraction from those formats to fail with a library error.
+
+### Security fix — path traversal (OWASP zip-slip)
+
+Archive entries whose resolved path escapes the extraction root are now rejected with a `SecurityException`. Previously, a crafted archive containing entries like `../../etc/passwd` could write files outside the intended output directory.
+
+### SOLID refactor
+
+- `SevenZipCompressor` and `SevenZipExtractor` are reorganised into partial-class files (`*.FileSystem.cs`, `*.Streams.cs`, `*.Async.cs`) for single-responsibility clarity. The public API surface is unchanged.
+- `FileChecker` (`FileSignatureChecker.cs`) is the dedicated archive-format detector — format detection logic is no longer duplicated in the extractor.
+- Three `GetArchiveUpdateCallback` overloads consolidated with a shared `FinalizeCallback` helper (DRY).
+- Empty/swallowed `catch` blocks replaced with `Debug.WriteLine` calls that preserve diagnostic information.
+
+### Native library resolution
+
+`SetLibraryPath()` still works. When not called, the library is located in this order:
+1. `SEVENZIPSHARP_7Z_PATH` environment variable (replaces the old `app.config` `AppSetting`).
+2. Embedded gzipped copy extracted to `%TEMP%/SevenZipSharp/<version>/<bitness>/7z.dll`.
+3. `x86`/`x64` subdirectory beside this assembly.
+4. `7z.dll` or `7za.dll` beside this assembly.
+
+### Test project
+
+An xUnit test project (`SevenZip.Tests/`) covers extraction (ZIP, TAR, GZip, BZip2, XZ, 7z-LZMA, 7z-LZMA2, 7z-PPMd, RAR), compression (SevenZip, ZIP, BZip2, GZip, XZ, PPMd), async APIs, format detection, and path-traversal regression.
+
+---
+
+The below is from the original CodePlex project description.
 
 **Project Description**  
 Managed 7-zip library written in C# that provides data (self-)extraction and compression (all 7-zip formats are supported). It wraps 7z.dll or any compatible one and makes use of LZMA SDK.  
@@ -151,7 +208,7 @@ Since the 0.50 release, compilation symbols are supported: UNMANAGED, COMPRESS, 
 
 </table>
 
-XZ compression/decompression fails, 7z PPMD method fails. Those bugs will probably be fixed in the future release.  
+~~XZ compression/decompression fails, 7z PPMD method fails.~~ Both bugs are fixed in this fork (see Fork Changes above).  
 
 I used Windows Mobile 6 SDK, but I believe the 5th version will also work.  
 Due to the absence of Marshal.GetDelegateFromFunctionPointer one is unable to load a 7-zip dll completely at runtime, hence SetLibraryPath does not work. You must deploy 7z.dll with your solution, just like SevenZipSharpMobileTest project does.  

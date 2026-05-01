@@ -16,30 +16,14 @@
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
-#if !WINCE && !MONO
-using System.Configuration;
 using System.Diagnostics;
-using System.Security.Permissions;
-using System.Security.AccessControl;
-using System.Security.Principal;
-#endif
-#if WINCE
-using OpenNETCF.Diagnostics;
-using OpenNETCF.Threading;
-using Mutex = OpenNETCF.Threading.NamedMutex;
-#else
-using System.Threading;
-#endif
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
-
-#if MONO
-using SevenZip.Mono.COM;
-#endif
+using System.Threading;
 
 namespace SevenZip
 {
@@ -138,7 +122,7 @@ namespace SevenZip
                 {
                     Init();
                 }
-#if !WINCE && !MONO
+
                 if (_modulePtr == IntPtr.Zero)
                 {
                     var libraryFileName = GetLibraryPath();
@@ -156,7 +140,7 @@ namespace SevenZip
                         throw new SevenZipLibraryException("library is invalid.");
                     }
                 }
-#endif
+
                 if (format is InArchiveFormat)
                 {
                     InitUserInFormat(user, (InArchiveFormat)format);
@@ -185,12 +169,8 @@ namespace SevenZip
                 {
                     if (!_modifyCapabale.HasValue)
                     {
-#if !WINCE && !MONO
                         FileVersionInfo dllVersionInfo = FileVersionInfo.GetVersionInfo(GetLibraryPath());
                         _modifyCapabale = dllVersionInfo.FileMajorPart >= 9;
-#else
-                    _modifyCapabale = true;
-#endif
                     }
                     return _modifyCapabale.Value;
                 }
@@ -345,75 +325,68 @@ namespace SevenZip
         /// <param name="format">Archive format</param>
         public static void FreeLibrary(object user, Enum format)
         {
-#if !WINCE && !MONO
-            var sp = new SecurityPermission(SecurityPermissionFlag.UnmanagedCode);
-            sp.Demand();
-#endif
             lock (_syncRoot)
-			{
-                if (_modulePtr != IntPtr.Zero)
             {
-                if (format is InArchiveFormat)
+                if (_modulePtr != IntPtr.Zero)
                 {
-                    if (_inArchives != null && _inArchives.ContainsKey(user) &&
-                        _inArchives[user].ContainsKey((InArchiveFormat) format) &&
-                        _inArchives[user][(InArchiveFormat) format] != null)
+                    if (format is InArchiveFormat)
                     {
-                        try
-                        {                            
-                            Marshal.ReleaseComObject(_inArchives[user][(InArchiveFormat) format]);
-                        }
-                        catch (InvalidComObjectException) {}
-                        _inArchives[user].Remove((InArchiveFormat) format);
-                        _totalUsers--;
-                        if (_inArchives[user].Count == 0)
+                        if (_inArchives != null && _inArchives.ContainsKey(user) &&
+                            _inArchives[user].ContainsKey((InArchiveFormat)format) &&
+                            _inArchives[user][(InArchiveFormat)format] != null)
                         {
-                            _inArchives.Remove(user);
+                            try
+                            {
+                                Marshal.ReleaseComObject(_inArchives[user][(InArchiveFormat)format]);
+                            }
+                            catch (InvalidComObjectException) { }
+                            _inArchives[user].Remove((InArchiveFormat)format);
+                            _totalUsers--;
+                            if (_inArchives[user].Count == 0)
+                            {
+                                _inArchives.Remove(user);
+                            }
                         }
                     }
-                }
 #if COMPRESS
-                if (format is OutArchiveFormat)
-                {
-                    if (_outArchives != null && _outArchives.ContainsKey(user) &&
-                        _outArchives[user].ContainsKey((OutArchiveFormat) format) &&
-                        _outArchives[user][(OutArchiveFormat) format] != null)
+                    if (format is OutArchiveFormat)
                     {
-                        try
+                        if (_outArchives != null && _outArchives.ContainsKey(user) &&
+                            _outArchives[user].ContainsKey((OutArchiveFormat)format) &&
+                            _outArchives[user][(OutArchiveFormat)format] != null)
                         {
-                            Marshal.ReleaseComObject(_outArchives[user][(OutArchiveFormat) format]);
-                        }
-                        catch (InvalidComObjectException) {}
-                        _outArchives[user].Remove((OutArchiveFormat) format);
-                        _totalUsers--;
-                        if (_outArchives[user].Count == 0)
-                        {
-                            _outArchives.Remove(user);
+                            try
+                            {
+                                Marshal.ReleaseComObject(_outArchives[user][(OutArchiveFormat)format]);
+                            }
+                            catch (InvalidComObjectException) { }
+                            _outArchives[user].Remove((OutArchiveFormat)format);
+                            _totalUsers--;
+                            if (_outArchives[user].Count == 0)
+                            {
+                                _outArchives.Remove(user);
+                            }
                         }
                     }
-                }
 #endif
-                if ((_inArchives == null || _inArchives.Count == 0)
+                    if ((_inArchives == null || _inArchives.Count == 0)
 #if COMPRESS
-                    && (_outArchives == null || _outArchives.Count == 0)
+                        && (_outArchives == null || _outArchives.Count == 0)
 #endif
-                    )
-                {
-                    _inArchives = null;
-#if COMPRESS
-                    _outArchives = null;
-#endif
-                    if (_totalUsers == 0)
+                        )
                     {
-#if !WINCE && !MONO
-                        NativeMethods.FreeLibrary(_modulePtr);
-
+                        _inArchives = null;
+#if COMPRESS
+                        _outArchives = null;
 #endif
-                        _modulePtr = IntPtr.Zero;
+                        if (_totalUsers == 0)
+                        {
+                            NativeMethods.FreeLibrary(_modulePtr);
+                            _modulePtr = IntPtr.Zero;
+                        }
                     }
                 }
             }
-			}
         }
 
         /// <summary>
@@ -427,10 +400,6 @@ namespace SevenZip
             {
                 if (_inArchives[user][format] == null)
                 {
-#if !WINCE && !MONO
-                    var sp = new SecurityPermission(SecurityPermissionFlag.UnmanagedCode);
-                    sp.Demand();
-
                     if (_modulePtr == IntPtr.Zero)
                     {
                         LoadLibrary(user, format);
@@ -447,29 +416,19 @@ namespace SevenZip
                     {
                         throw new SevenZipLibraryException();
                     }
-#endif
+
                     object result;
-#if !WINCE && !MONO
                     Guid interfaceId = typeof(IInArchive).GUID;
-#else
-                    Guid interfaceId = new Guid(((GuidAttribute)typeof(IInArchive).GetCustomAttributes(typeof(GuidAttribute), false)[0]).Value);
-#endif
                     Guid classID = Formats.InFormatGuids[format];
                     try
                     {
-#if !WINCE && !MONO
                         createObject(ref classID, ref interfaceId, out result);
-#elif !MONO
-                    	NativeMethods.CreateCOMObject(ref classID, ref interfaceId, out result);
-#else
-						result = SevenZip.Mono.Factory.CreateInterface<IInArchive>(user, classID, interfaceId);
-#endif
                     }
                     catch (Exception)
                     {
                         throw new SevenZipLibraryException("Your 7-zip library does not support this archive type.");
                     }
-                    InitUserInFormat(user, format);									
+                    InitUserInFormat(user, format);
                     _inArchives[user][format] = result as IInArchive;
                 }
                 return _inArchives[user][format];
@@ -488,9 +447,6 @@ namespace SevenZip
             {
                 if (_outArchives[user][format] == null)
                 {
-#if !WINCE && !MONO
-                    var sp = new SecurityPermission(SecurityPermissionFlag.UnmanagedCode);
-                    sp.Demand();
                     if (_modulePtr == IntPtr.Zero)
                     {
                         throw new SevenZipLibraryException();
@@ -503,23 +459,13 @@ namespace SevenZip
                     {
                         throw new SevenZipLibraryException();
                     }
-#endif
+
                     object result;
-#if !WINCE && !MONO
                     Guid interfaceId = typeof(IOutArchive).GUID;
-#else
-                    Guid interfaceId = new Guid(((GuidAttribute)typeof(IOutArchive).GetCustomAttributes(typeof(GuidAttribute), false)[0]).Value);
-#endif
                     Guid classID = Formats.OutFormatGuids[format];
                     try
                     {
-#if !WINCE && !MONO
                         createObject(ref classID, ref interfaceId, out result);
-#elif !MONO
-                    	NativeMethods.CreateCOMObject(ref classID, ref interfaceId, out result);
-#else
-						result = SevenZip.Mono.Factory.CreateInterface<IOutArchive>(classID, interfaceId, user);
-#endif
                     }
                     catch (Exception)
                     {
@@ -550,154 +496,123 @@ namespace SevenZip
         ///           9. [All] A file called 7za.dll in the same directory as this assembly.  
         ///           If not found, we give up and fail.
         /// </remarks>
+        /// <summary>
+        /// Resolves the path to the 7z.dll using the following search order:
+        /// 1. A previous call to SetLibraryPath().
+        /// 2. The SEVENZIPSHARP_7Z_PATH environment variable.
+        /// 3. An embedded gzipped copy extracted to %TEMP%.
+        /// 4. x86/x64 subdirectories beside this assembly.
+        /// 5. 7z.dll or 7za.dll beside this assembly.
+        /// </summary>
         private static string GetLibraryPath()
         {
             if (_libraryFileName != null && (_modulePtr != IntPtr.Zero || File.Exists(_libraryFileName)))
                 return _libraryFileName;
-            
-            string default7zPath = null;
 
-#if !WINCE && !MONO
-            var sevenZipLocation = ConfigurationManager.AppSettings["7zLocation"];
-            if(!string.IsNullOrEmpty(sevenZipLocation) && File.Exists(sevenZipLocation))
-            {
-                _libraryFileName = sevenZipLocation;
-                return _libraryFileName;
-            }
-            default7zPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-#endif
-#if WINCE
-            default7zPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().GetName().CodeBase);
-            var sevenZipLocation = Path.Combine(default7zPath, "7z.dll");
-            if(File.Exists(sevenZipLocation))
-            {
-                _libraryFileName = sevenZipLocation;
-                return _libraryFileName;
-            }
-            var bitness = "arm";
-#else
             var bitness = IntPtr.Size == 4 ? "x86" : "x64";
-#endif
             var thisType = typeof(SevenZipLibraryManager);
-#if WINCE
-            _libraryFileName = sevenZipLocation;
-#else
-            var version = thisType.Assembly.GetName().Version.ToString(3);
-            _libraryFileName = Path.Combine(Path.GetTempPath(), String.Join(Path.DirectorySeparatorChar.ToString(CultureInfo.InvariantCulture), new string[] { "SevenZipSharp", version, bitness, "7z.dll" }));
-#endif
+
+            // 1. Environment variable (replaces app.config AppSetting)
+            var envPath = Environment.GetEnvironmentVariable("SEVENZIPSHARP_7Z_PATH");
+            if (!string.IsNullOrEmpty(envPath) && File.Exists(envPath))
+            {
+                _libraryFileName = envPath;
+                return _libraryFileName;
+            }
+
+            var default7zPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+
+            // 2. Embedded gzipped resource extracted to %TEMP%
+            var version = thisType.Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
+            _libraryFileName = Path.Combine(
+                Path.GetTempPath(),
+                "SevenZipSharp", version, bitness, "7z.dll");
+
             if (File.Exists(_libraryFileName))
                 return _libraryFileName;
 
-            //NOTE: This is the approach used in https://github.com/jacobslusser/ScintillaNET for handling the native component.
-            //      I liked it, so I added it to this project.  We could have a build configuration that doesn't embed the dlls
-            //      to make our assembly smaller and future proof, but you'd need to handle distributing and setting the dll yourself.
-            // Extract the embedded DLL http://stackoverflow.com/a/768429/2073621
-            // Synchronize access to the file across processes http://stackoverflow.com/a/229567/2073621
-            var guid = ((GuidAttribute)thisType.Assembly.GetCustomAttributes(typeof(GuidAttribute), false).GetValue(0)).Value.ToString(CultureInfo.InvariantCulture);
-            var name = string.Format(CultureInfo.InvariantCulture, "Global\\{{{0}}}", guid);
-            using (var mutex = new Mutex(false, name))
+            // Use a named mutex so multiple processes don't race to extract simultaneously
+            var guid = ((GuidAttribute?)thisType.Assembly.GetCustomAttributes(typeof(GuidAttribute), false).GetValue(0))
+                           ?.Value?.ToString(CultureInfo.InvariantCulture) ?? "SevenZipSharp";
+            var mutexName = string.Format(CultureInfo.InvariantCulture, "Global\\{{{0}}}", guid);
+            using (var mutex = new Mutex(false, mutexName))
             {
-#if !WINCE
-                var access = new MutexAccessRule(new SecurityIdentifier(WellKnownSidType.WorldSid, null), MutexRights.FullControl, AccessControlType.Allow);
-                var security = new MutexSecurity();
-                security.AddAccessRule(access);
-                mutex.SetAccessControl(security);
-#endif
                 var ownsHandle = false;
                 try
                 {
                     try
                     {
-                        ownsHandle = mutex.WaitOne(5000, false); // 5 sec
+                        ownsHandle = mutex.WaitOne(5000, false);
                         if (!ownsHandle)
                         {
-                            var timeoutMessage = string.Format(CultureInfo.InvariantCulture, "Timeout waiting for exclusive access to '{0}'.", _libraryFileName);
-                            throw new TimeoutException(timeoutMessage);
+                            throw new TimeoutException(
+                                string.Format(CultureInfo.InvariantCulture,
+                                    "Timeout waiting for exclusive access to '{0}'.", _libraryFileName));
                         }
                     }
-#if WINCE
-                    catch
-#else
                     catch (AbandonedMutexException)
-#endif
                     {
-                        // Previous process terminated abnormally
                         ownsHandle = true;
                     }
 
-                    // Double-checked (process) lock
                     if (File.Exists(_libraryFileName))
                         return _libraryFileName;
 
-                    // Write the embedded file to disk
-                    var directory = Path.GetDirectoryName(_libraryFileName);
+                    var directory = Path.GetDirectoryName(_libraryFileName)!;
                     if (!Directory.Exists(directory))
                         Directory.CreateDirectory(directory);
-                                
-                    Exception ex =  null;
+
+                    Exception? extractionException = null;
                     try
                     {
-#if WINCE
-                        var resource = string.Format(CultureInfo.InvariantCulture, "{0}.{1}.7z.dll.gz", thisType.Assembly.GetName().Name, bitness); //packing of resources differ
-#else
-                        var resource = string.Format(CultureInfo.InvariantCulture, "{0}.{1}.7z.dll.gz", thisType.Namespace, bitness); //packing of resources differ
-#endif
+                        var resource = string.Format(CultureInfo.InvariantCulture,
+                            "{0}.{1}.7z.dll.gz", thisType.Namespace, bitness);
                         var resourceStream = thisType.Assembly.GetManifestResourceStream(resource);
                         if (resourceStream == null)
                         {
-                            ex = new InvalidProgramException(string.Format("Could not extract resource named '{0}' from assembly '{1}'", resource, thisType.Assembly.FullName));
+                            extractionException = new InvalidProgramException(
+                                string.Format("Could not extract resource named '{0}' from assembly '{1}'",
+                                    resource, thisType.Assembly.FullName));
                         }
                         else
                         {
                             using (var gzipStream = new GZipStream(resourceStream, System.IO.Compression.CompressionMode.Decompress))
+                            using (var fileStream = File.Create(_libraryFileName))
                             {
-                                using (var fileStream = File.Create(_libraryFileName))
-                                {
-                                    //Would normally use gzipStream.CopyTo(fileStream) but this is .NET 2.0 compliant.
-                                    var buffer = new byte[4096];
-                                    int count;
-                                    while ((count = gzipStream.Read(buffer, 0, buffer.Length)) != 0)
-                                        fileStream.Write(buffer, 0, count);
-                                    return _libraryFileName;
-                                }
+                                gzipStream.CopyTo(fileStream);
+                                return _libraryFileName;
                             }
                         }
                     }
                     catch (Exception e)
                     {
-                        ex = e;
-                        if(File.Exists(_libraryFileName))
+                        extractionException = e;
+                        if (File.Exists(_libraryFileName))
                             File.Delete(_libraryFileName);
                     }
-#if !WINCE
+
+                    // 3. x86/x64 subdirectories beside this assembly
                     if (default7zPath != null)
                     {
-                        var testPath = Path.Combine(default7zPath, String.Concat(bitness, Path.DirectorySeparatorChar, "7z.dll"));
-                        if (File.Exists(testPath))
-                            return _libraryFileName = testPath;
-                        testPath = Path.Combine(default7zPath, String.Concat(bitness, Path.DirectorySeparatorChar, "7za.dll"));
-                        if (File.Exists(testPath))
-                            return _libraryFileName = testPath;
+                        var testPath = Path.Combine(default7zPath, bitness, "7z.dll");
+                        if (File.Exists(testPath)) return _libraryFileName = testPath;
+                        testPath = Path.Combine(default7zPath, bitness, "7za.dll");
+                        if (File.Exists(testPath)) return _libraryFileName = testPath;
                         var bitnessSansX = IntPtr.Size == 4 ? "86" : "64";
-                        var sevenZipWithBitDllName = string.Format(CultureInfo.InvariantCulture, "7z{0}.dll", bitnessSansX);
-                        testPath = Path.Combine(default7zPath, sevenZipWithBitDllName);
-                        if (File.Exists(testPath))
-                            return _libraryFileName = testPath;
-                        var sevenZipAWithBitDllName = string.Format(CultureInfo.InvariantCulture, "7za{0}.dll", bitnessSansX);
-                        testPath = Path.Combine(default7zPath, sevenZipAWithBitDllName);
-                        if (File.Exists(testPath))
-                            return _libraryFileName = testPath;
+                        testPath = Path.Combine(default7zPath, string.Format(CultureInfo.InvariantCulture, "7z{0}.dll", bitnessSansX));
+                        if (File.Exists(testPath)) return _libraryFileName = testPath;
+                        testPath = Path.Combine(default7zPath, string.Format(CultureInfo.InvariantCulture, "7za{0}.dll", bitnessSansX));
+                        if (File.Exists(testPath)) return _libraryFileName = testPath;
                         testPath = Path.Combine(default7zPath, "7z.dll");
-                        if (File.Exists(testPath))
-                            return _libraryFileName = testPath;
+                        if (File.Exists(testPath)) return _libraryFileName = testPath;
                         testPath = Path.Combine(default7zPath, "7za.dll");
-                        if (File.Exists(testPath))
-                            return _libraryFileName = testPath;
+                        if (File.Exists(testPath)) return _libraryFileName = testPath;
                     }
-#endif
+
                     _libraryFileName = null;
-                    throw new SevenZipLibraryException("Unable to locate the 7z.dll. Please call SetLibraryPath() or set app.config AppSetting '7zLocation' " +
-                                                        "which must be path to the proper bit 7z.dll", ex);
+                    throw new SevenZipLibraryException(
+                        "Unable to locate 7z.dll. Call SetLibraryPath() or set the SEVENZIPSHARP_7Z_PATH environment variable.",
+                        extractionException);
                 }
                 finally
                 {
@@ -717,11 +632,8 @@ namespace SevenZip
         /// </remarks>
         public static void SetLibraryPath(string libraryPath)
         {
-#if WINCE
-            //In WindowsCE this is a no-op.  The library MUST be in the app directory.
-            return;
-#else
-            if (_modulePtr != IntPtr.Zero && !Path.GetFullPath(libraryPath).Equals(Path.GetFullPath(_libraryFileName), StringComparison.OrdinalIgnoreCase))
+            if (_modulePtr != IntPtr.Zero &&
+                !Path.GetFullPath(libraryPath).Equals(Path.GetFullPath(_libraryFileName!), StringComparison.OrdinalIgnoreCase))
             {
                 throw new SevenZipLibraryException(
                     "can not change the library path while the library \"" + _libraryFileName + "\" is being used.");
@@ -733,22 +645,15 @@ namespace SevenZip
             }
             _libraryFileName = libraryPath;
             _features = null;
-#endif
         }
 
-#if !WINCE
         /// <summary>
         /// Returns the version information of the native 7zip library.
         /// </summary>
-        /// <returns>An object representing the version information of the native 7zip library.</returns>
         public static FileVersionInfo GetLibraryVersion()
         {
-            var path = GetLibraryPath();
-            var version = FileVersionInfo.GetVersionInfo(path);
-
-            return version;
+            return FileVersionInfo.GetVersionInfo(GetLibraryPath());
         }
-#endif
     }
 #endif
 }

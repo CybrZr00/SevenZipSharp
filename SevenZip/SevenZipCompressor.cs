@@ -18,20 +18,10 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-#if DOTNET20
-using System.Threading;
-#else
 using System.Linq;
-#endif
 using System.Runtime.InteropServices;
-#if !WINCE
-using System.Security.Permissions;
-#endif
 using SevenZip;
 using SevenZip.Compression.LZMA;
-#if MONO
-using SevenZip.Mono.COM;
-#endif
 
 namespace SevenZip
 {
@@ -301,16 +291,19 @@ namespace SevenZip
                     }
                     var names = new List<IntPtr>(2 + CustomParameters.Count);
                     var values = new List<PropVariant>(2 + CustomParameters.Count);
-#if !WINCE
-                    var sp = new SecurityPermission(SecurityPermissionFlag.UnmanagedCode);
-                    sp.Demand();
-#endif
                     #region Initialize compression properties
 
                     if (_compressionMethod == CompressionMethod.Default)
                     {
                         names.Add(Marshal.StringToBSTR("x"));
                         values.Add(new PropVariant());
+                        // XZ format wraps LZMA2; 7z.dll requires the codec to be named explicitly
+                        // when SetProperties is called — omitting it causes compression failure.
+                        if (_archiveFormat == OutArchiveFormat.XZ)
+                        {
+                            names.Add(Marshal.StringToBSTR("0"));
+                            values.Add(new PropVariant { VarType = VarEnum.VT_BSTR, Value = Marshal.StringToBSTR("LZMA2") });
+                        }
                         foreach (var pair in CustomParameters)
                         {
                             names.Add(Marshal.StringToBSTR(pair.Key));
@@ -757,60 +750,37 @@ Enum.GetName(typeof(ZipEncryptionMethod), ZipEncryptionMethod))
             return dictionarySize;
         }
 
-        /// <summary>   Produces  a new instance of ArchiveUpdateCallback class.</summary>
-        /// <param name="files">        Array of FileInfo - files to pack.</param>
-        /// <param name="altNames">     List of names of the alternates.</param>
-        /// <param name="rootLength">   Length of the common root of file names.</param>
-        /// <param name="password">     The archive password.</param>
-        /// <returns>   The archive update callback.</returns>
+        private ArchiveUpdateCallback FinalizeCallback(ArchiveUpdateCallback auc)
+        {
+            auc.DictionarySize = GetDictionarySize();
+            CommonUpdateCallbackInit(auc);
+            return auc;
+        }
+
         private ArchiveUpdateCallback GetArchiveUpdateCallback(
             FileInfo[] files, string[] altNames, int rootLength, string password)
         {
             SetCompressionProperties();
-            var auc = (String.IsNullOrEmpty(password))
-                      ? new ArchiveUpdateCallback(files, altNames, rootLength, this, GetUpdateData(), DirectoryStructure) 
-                        { DictionarySize = GetDictionarySize() }
-                      : new ArchiveUpdateCallback(files, altNames, rootLength, password, this, GetUpdateData(), DirectoryStructure) 
-                        { DictionarySize = GetDictionarySize() };
-            CommonUpdateCallbackInit(auc);
-            return auc;
+            return FinalizeCallback(String.IsNullOrEmpty(password)
+                ? new ArchiveUpdateCallback(files, altNames, rootLength, this, GetUpdateData(), DirectoryStructure)
+                : new ArchiveUpdateCallback(files, altNames, rootLength, password, this, GetUpdateData(), DirectoryStructure));
         }
 
-        /// <summary>
-        /// Produces  a new instance of ArchiveUpdateCallback class.
-        /// </summary>
-        /// <param name="inStream">The archive input stream.</param>
-        /// <param name="password">The archive password.</param>
-        /// <returns></returns>
         private ArchiveUpdateCallback GetArchiveUpdateCallback(Stream inStream, string password)
         {
             SetCompressionProperties();
-            var auc = (String.IsNullOrEmpty(password))
-                      ?   new ArchiveUpdateCallback(inStream, this, GetUpdateData(), DirectoryStructure) 
-                        { DictionarySize = GetDictionarySize() }
-                      :   new ArchiveUpdateCallback(inStream, password, this, GetUpdateData(), DirectoryStructure) 
-                        { DictionarySize = GetDictionarySize() };
-            CommonUpdateCallbackInit(auc);
-            return auc;
+            return FinalizeCallback(String.IsNullOrEmpty(password)
+                ? new ArchiveUpdateCallback(inStream, this, GetUpdateData(), DirectoryStructure)
+                : new ArchiveUpdateCallback(inStream, password, this, GetUpdateData(), DirectoryStructure));
         }
 
-        /// <summary>
-        /// Produces  a new instance of ArchiveUpdateCallback class.
-        /// </summary>
-        /// <param name="streamDict">Dictionary&lt;name of the archive entry, stream&gt;.</param>
-        /// <param name="password">The archive password</param>
-        /// <returns></returns>
         private ArchiveUpdateCallback GetArchiveUpdateCallback(
             Dictionary<string, Stream> streamDict, string password)
         {
             SetCompressionProperties();
-            var auc = (String.IsNullOrEmpty(password))
-                      ? new ArchiveUpdateCallback(streamDict, this, GetUpdateData(), DirectoryStructure) 
-                        { DictionarySize = GetDictionarySize() }
-                      : new ArchiveUpdateCallback(streamDict, password, this, GetUpdateData(), DirectoryStructure) 
-                        { DictionarySize = GetDictionarySize() };
-            CommonUpdateCallbackInit(auc);
-            return auc;
+            return FinalizeCallback(String.IsNullOrEmpty(password)
+                ? new ArchiveUpdateCallback(streamDict, this, GetUpdateData(), DirectoryStructure)
+                : new ArchiveUpdateCallback(streamDict, password, this, GetUpdateData(), DirectoryStructure));
         }
 
         #endregion

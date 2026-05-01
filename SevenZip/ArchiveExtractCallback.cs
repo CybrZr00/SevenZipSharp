@@ -16,14 +16,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Text.RegularExpressions;
-
-#if MONO
-using SevenZip.Mono.COM;
 using System.Runtime.InteropServices;
-#endif
+using System.Security;
+using System.Text.RegularExpressions;
 
 namespace SevenZip
 {
@@ -66,27 +64,21 @@ namespace SevenZip
         /// <summary> Usage: string legalPath = InvalidPathCharsRegex.Replace(illegal, "_"); </summary>
         private static readonly Regex InvalidPathCharsRegex;
 
-#if !WINCE
-        const int MEMORY_PRESSURE = 64 * 1024 * 1024; //64mb seems to be the maximum value
-#endif
+        const int MEMORY_PRESSURE = 64 * 1024 * 1024; //64mb
         #region Constructors
 
         static ArchiveExtractCallback()
         {
-            //  GetInvalidFileNameChars() is not complete.  Should also include: quote ("), less than (<), greater than (>), pipe (|), backspace (\b), null (\0), and tab (\t).
-#if WINCE
-            char[] nonprintables = new char[32];
-            for (int i = 0; i < 32; i++)
-                nonprintables[i] = (char) i;
-            var invalidFileNameChars = new string(nonprintables) + "\"<>|:*?/\\";
-#else
+            // GetInvalidFileNameChars() is not complete — also exclude quote, <, >, |, backspace, null, tab.
             var invalidFileNameChars = Path.GetInvalidFileNameChars() + "\"<>|\b\t\0";
-#endif
-            InvalidFileNameCharsRegex = new Regex(string.Format("[{0}]", Regex.Escape(invalidFileNameChars)), RegexOptions.Compiled | RegexOptions.CultureInvariant);
+            InvalidFileNameCharsRegex = new Regex(
+                string.Format("[{0}]", Regex.Escape(invalidFileNameChars)),
+                RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-            //  GetInvalidPathChars() is not complete.  Should also include: quote ("), less than (<), greater than (>), pipe (|), backspace (\b), null (\0), and tab (\t).
             var invalidPathChars = Path.GetInvalidPathChars() + "\"<>|\b\t\0";
-            InvalidPathCharsRegex = new Regex(string.Format("[{0}]", Regex.Escape(invalidPathChars)), RegexOptions.Compiled | RegexOptions.CultureInvariant);
+            InvalidPathCharsRegex = new Regex(
+                string.Format("[{0}]", Regex.Escape(invalidPathChars)),
+                RegexOptions.Compiled | RegexOptions.CultureInvariant);
         }
 
         /// <summary>
@@ -382,6 +374,20 @@ namespace SevenZip
                             AddException(e);
                             goto FileExtractionStartedLabel;
                         }
+
+                        // OWASP path traversal guard: reject entries that escape the extraction root
+                        {
+                            var resolvedPath = Path.GetFullPath(fileName);
+                            var resolvedRoot = Path.GetFullPath(_directory);
+                            if (!resolvedPath.StartsWith(resolvedRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                                && !string.Equals(resolvedPath, resolvedRoot, StringComparison.OrdinalIgnoreCase))
+                            {
+                                AddException(new SecurityException(
+                                    $"Archive entry at index {index} would extract outside the target directory and was skipped."));
+                                goto FileExtractionStartedLabel;
+                            }
+                        }
+
                         if (!NativeMethods.SafeCast(data, false))
                         {
                             #region Branch
@@ -530,7 +536,7 @@ namespace SevenZip
                     _fileStream.BytesWritten -= IntEventArgsHandler;
                     _fileStream.Dispose();
                 }
-                catch (ObjectDisposedException) { }
+                catch (ObjectDisposedException ex) { Debug.WriteLine($"[SevenZipSharp] SetOperationResult: stream already disposed: {ex.Message}"); }
                 _fileStream = null;
             }
 
@@ -592,7 +598,7 @@ namespace SevenZip
                 {
                     _fileStream.Dispose();
                 }
-                catch (ObjectDisposedException) { }
+                catch (ObjectDisposedException ex) { Debug.WriteLine($"[SevenZipSharp] Dispose: _fileStream already disposed: {ex.Message}"); }
                 _fileStream = null;
             }
             if (_fakeStream != null)
@@ -601,7 +607,7 @@ namespace SevenZip
                 {
                     _fakeStream.Dispose();
                 }
-                catch (ObjectDisposedException) { }
+                catch (ObjectDisposedException ex) { Debug.WriteLine($"[SevenZipSharp] Dispose: _fakeStream already disposed: {ex.Message}"); }
                 _fakeStream = null;
             }
         }

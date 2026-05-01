@@ -16,12 +16,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
-#if MONO
-using SevenZip.Mono.COM;
-#endif
 
 namespace SevenZip
 {
@@ -98,29 +96,25 @@ namespace SevenZip
         /// </summary>
         public void Dispose()
         {
-            bool setDateTime = false;			            
+            bool setDateTime = false;
             if (!String.IsNullOrEmpty(_fileName) && File.Exists(_fileName))
             {
                 setDateTime = true;
                 try
-                {         
-#if !WINCE
+                {
                     File.SetLastAccessTime(_fileName, _fileTime);
                     File.SetCreationTime(_fileName, _fileTime);
-#elif WINCE
-                    OpenNETCF.IO.FileHelper.SetLastAccessTime(_fileName, _fileTime);
-                    OpenNETCF.IO.FileHelper.SetCreationTime(_fileName, _fileTime);
-#endif
-                    //TODO: time support for Windows Phone
                 }
-                catch {}  //Eat any issues, not critical.
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    // Timestamp updates are best-effort; a locked or read-only file should not abort disposal.
+                    Debug.WriteLine($"StreamWrapper.Dispose: could not set file timestamps on '{_fileName}': {ex.Message}");
+                }
             }
-            //Patch 16476: Jun 12, 2014 to prevent Antivirus from locking file after disposal but before datetimes are set. (2 of 2 changes)
-            // In this change, Dispose was moved after the LastAccess and CreationTime times are set.  However, Modify date is reset 
-            // on the file AFTER the stream is disposed, so that one we MUST to do after disposal of the stream.  This at lease ensures that
-            // two of the three dates are from the archive and minimizes the risk of one set getting captured by AV.
+            // Dispose AFTER setting access/creation times so antivirus scanners cannot lock the file
+            // between stream close and timestamp update (two of three dates are set before dispose).
             if (_baseStream != null && DisposeStream)
-            {               
+            {
                 try
                 {
                     _baseStream.Dispose();
@@ -131,16 +125,14 @@ namespace SevenZip
                 {
                     try
                     {
-#if !WINCE
-                        File.SetLastWriteTime(_fileName, _fileTime);
-#elif WINCE
-                        OpenNETCF.IO.FileHelper.SetLastWriteTime(_fileName, _fileTime);
-#endif
-                        //TODO: time support for Windows Phone
+                        File.SetLastWriteTime(_fileName!, _fileTime);
                     }
-                    catch { } //Eat any issues, not critical.
+                    catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                    {
+                        Debug.WriteLine($"StreamWrapper.Dispose: could not set LastWriteTime on '{_fileName}': {ex.Message}");
+                    }
                 }
-                _baseStream = null;                                
+                _baseStream = null;
             }
             GC.SuppressFinalize(this);
         }
