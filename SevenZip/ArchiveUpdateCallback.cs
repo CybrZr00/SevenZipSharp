@@ -16,11 +16,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
-#if MONO
-using SevenZip.Mono.COM;
-#endif
 
 namespace SevenZip
 {
@@ -755,7 +753,7 @@ namespace SevenZip
                     {
                         _fileStream.Dispose();
                     }
-                    catch (ObjectDisposedException) { }
+                    catch (ObjectDisposedException ex) { Debug.WriteLine($"[SevenZipSharp] SetOperationResult: _fileStream already disposed: {ex.Message}"); }
                     _fileStream = null;
                 }
 
@@ -781,9 +779,9 @@ namespace SevenZip
                     {
                         try
                         {
-                            _fileStream.Dispose();                            
+                            _fileStream.Dispose();
                         }
-                        catch (ObjectDisposedException) {}
+                        catch (ObjectDisposedException ex) { Debug.WriteLine($"[SevenZipSharp] GetStream: _fileStream already disposed: {ex.Message}"); }
                     }
                     else
                     {
@@ -824,7 +822,7 @@ namespace SevenZip
                 {
                     _fileStream.Dispose();
                 }
-                catch (ObjectDisposedException) {}
+                catch (ObjectDisposedException ex) { Debug.WriteLine($"[SevenZipSharp] Dispose: _fileStream already disposed: {ex.Message}"); }
             }
             if (_wrappersToDispose != null)
             {
@@ -834,7 +832,7 @@ namespace SevenZip
                     {
                         wrapper.Dispose();
                     }
-                    catch (ObjectDisposedException) {}
+                    catch (ObjectDisposedException ex) { Debug.WriteLine($"[SevenZipSharp] Dispose: wrapper already disposed: {ex.Message}"); }
                 }
             }
             GC.SuppressFinalize(this);

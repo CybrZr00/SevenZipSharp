@@ -20,15 +20,8 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-#if DOTNET20
-using System.Threading;
-#else
 using System.Linq;
-#endif
 using SevenZip.Compression.LZMA;
-#if MONO
-using SevenZip.Mono.COM;
-#endif
 
 namespace SevenZip
 {
@@ -65,12 +58,10 @@ namespace SevenZip
         private ReadOnlyCollection<ArchiveProperty> _archiveProperties;
         //SAB: Init this now to prevent later null ref based on how this object is constructed.
         private ReadOnlyCollection<string> _volumeFileNames = new ReadOnlyCollection<string>(new List<string>());
-#if !WINCE
         /// <summary>
-        /// This is used to lock possible Dispose() calls.
+        /// This is used to lock possible Dispose() calls during async operations.
         /// </summary>
         private bool _asynchronousDisposeLock;
-#endif
 
         #region Constructors
         /// <summary>
@@ -762,7 +753,7 @@ namespace SevenZip
                         _archive.Close();
                     }
                 }
-                catch (Exception) { }
+                catch (Exception ex) { Debug.WriteLine($"[SevenZipSharp] CommonDispose: _archive.Close() failed: {ex.Message}"); }
             }
             _archive = null;
             _archiveFileData = null;
@@ -774,7 +765,7 @@ namespace SevenZip
                 {
                     _inStream.Dispose();
                 }
-                catch{ }
+                catch (Exception ex) { Debug.WriteLine($"[SevenZipSharp] CommonDispose: _inStream.Dispose() failed: {ex.Message}"); }
                 _inStream = null;
             }
             if (_openCallback != null)
@@ -783,7 +774,7 @@ namespace SevenZip
                 {
                     _openCallback.Dispose();
                 }
-                catch (ObjectDisposedException) { }
+                catch (ObjectDisposedException ex) { Debug.WriteLine($"[SevenZipSharp] CommonDispose: _openCallback already disposed: {ex.Message}"); }
                 _openCallback = null;
             }
             if (_archiveStream != null)
@@ -798,7 +789,7 @@ namespace SevenZip
                         }
                         (_archiveStream as IDisposable).Dispose();
                     }
-                    catch (ObjectDisposedException) { }
+                    catch (ObjectDisposedException ex) { Debug.WriteLine($"[SevenZipSharp] CommonDispose: _archiveStream already disposed: {ex.Message}"); }
                     _archiveStream = null;
                 }
             }

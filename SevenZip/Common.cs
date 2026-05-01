@@ -17,20 +17,11 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Threading;
-#if !WINCE
-using System.Runtime.Remoting.Messaging;
-using System.Diagnostics;
-#else
-using OpenNETCF.Diagnostics;
-#endif
-#if !(DOTNET20 || WINCE)
-using System.Windows.Threading;
-#endif
-#if MONO
-using SevenZip.Mono.COM;
-#endif
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace SevenZip
 {
@@ -58,116 +49,76 @@ namespace SevenZip
     /// <summary>
     /// SevenZip Extractor/Compressor base class. Implements Password string, ReportErrors flag.
     /// </summary>
-    public abstract class SevenZipBase : MarshalByRefObject
+    public abstract class SevenZipBase
     {
         private readonly string _password;
         private readonly bool _reportErrors;
         private readonly int _uniqueID;
-        /// <summary>   Unique identifier source. Use System.Threading.Interlocked.Increment(ref IncrementingUniqueId) to get the next UniqueID.</summary>
         private static int IncrementingUniqueId = Environment.TickCount;
-#if !WINCE
-        internal static readonly AsyncCallback AsyncCallbackImplementation = AsyncCallbackMethod;
+
+        private ILogger _logger = NullLogger.Instance;
+
+        /// <summary>
+        /// Gets or sets the event synchronization strategy.
+        /// </summary>
+        public EventSynchronizationStrategy EventSynchronization { get; set; }
+
+        /// <summary>
+        /// The SynchronizationContext captured when async operations begin, used to marshal events back to the caller's context.
+        /// </summary>
+        internal SynchronizationContext? Context { get; set; }
 
         /// <summary>
         /// True if the instance of the class needs to be recreated in new thread context; otherwise, false.
         /// </summary>
         protected internal bool NeedsToBeRecreated;
 
-        /// <summary>
-        /// AsyncCallback implementation used in asynchronous invocations.
-        /// </summary>
-        /// <param name="ar">IAsyncResult instance.</param>
-        internal static void AsyncCallbackMethod(IAsyncResult ar)
+        internal virtual void SaveContext()
         {
-            var result = (AsyncResult)ar;
-            result.AsyncDelegate.GetType().GetMethod("EndInvoke").Invoke(result.AsyncDelegate, new[] { ar });
-            ((SevenZipBase)ar.AsyncState).ReleaseContext();
-        }
-
-        virtual internal void SaveContext(
-#if !DOTNET20
-DispatcherPriority priority = DispatcherPriority.Normal
-#endif
-)
-        {
-#if !DOTNET20
-            Dispatcher = Dispatcher.CurrentDispatcher;
-            Priority = priority;
-#else
             Context = SynchronizationContext.Current;
-#endif
             NeedsToBeRecreated = true;
         }
 
-        virtual internal void ReleaseContext()
+        internal virtual void ReleaseContext()
         {
-#if !DOTNET20
-            Dispatcher = null;
-#else
             Context = null;
-#endif
             NeedsToBeRecreated = true;
+            // GC.SuppressFinalize remains for any subclass that adds a finalizer
             GC.SuppressFinalize(this);
         }
 
         private delegate void EventHandlerDelegate<T>(EventHandler<T> handler, T e) where T : EventArgs;
 
-        internal void OnEvent<T>(EventHandler<T> handler, T e, bool synchronous) where T : EventArgs
+        internal void OnEvent<T>(EventHandler<T>? handler, T e, bool synchronous) where T : EventArgs
         {
+            if (handler == null) return;
             try
             {
-                if (handler != null)
+                switch (EventSynchronization)
                 {
-                    switch (EventSynchronization)
+                    case EventSynchronizationStrategy.AlwaysAsynchronous:
+                        synchronous = false;
+                        break;
+                    case EventSynchronizationStrategy.AlwaysSynchronous:
+                        synchronous = true;
+                        break;
+                }
+
+                if (Context == null)
+                {
+                    handler(this, e);
+                }
+                else
+                {
+                    var callback = new SendOrPostCallback(obj =>
                     {
-                        case EventSynchronizationStrategy.AlwaysAsynchronous:
-                            synchronous = false;
-                            break;
-                        case EventSynchronizationStrategy.AlwaysSynchronous:
-                            synchronous = true;
-                            break;
-                    }
-                    if (
-#if !DOTNET20
-Dispatcher == null
-#else
-                        Context == null
-#endif
-)
-                    {
-                        // Usual synchronous call
-                        handler(this, e);
-                    }
-                    else
-                    {
-#if !DOTNET20
-                        var eventHandlerDelegate = new EventHandlerDelegate<T>((h, ee) => h(this, ee));
-                        if (synchronous)
-                        {
-                            // Could be just handler(this, e);
-                            Dispatcher.Invoke(eventHandlerDelegate, Priority, handler, e);
-                        }
-                        else
-                        {
-                            Dispatcher.BeginInvoke(eventHandlerDelegate, Priority, handler, e);
-                        }
-#else
-                    var callback = new SendOrPostCallback((obj) =>
-                    {
-                        var array = (object[])obj;
+                        var array = (object[])obj!;
                         ((EventHandler<T>)array[0])(array[1], (T)array[2]);
                     });
                     if (synchronous)
-                    {
-                        // Could be just handler(this, e);
-                        this.Context.Send(callback, new object[] { handler, this, e });
-                    }
+                        Context.Send(callback, new object[] { handler, this, e });
                     else
-                    {
-                        this.Context.Post(callback, new object[] { handler, this, e });
-                    }
-#endif
-                    }
+                        Context.Post(callback, new object[] { handler, this, e });
                 }
             }
             catch (Exception ex)
@@ -176,49 +127,10 @@ Dispatcher == null
             }
         }
 
-#if !DOTNET20
-        /// <summary>
-        /// Gets or sets the Dispatcher object for this instance.
-        /// It will be used to fire events in the user context.
-        /// </summary>
-        internal Dispatcher Dispatcher { get; set; }
-
-        /// <summary>
-        /// Gets or sets the Dispatcher priority of calling user events.
-        /// </summary>
-        internal DispatcherPriority Priority { get; set; }
-#else
-        internal SynchronizationContext Context { get; set; }
-#endif
-        /// <summary>
-        /// Gets or sets the event synchronization strategy.
-        /// </summary>
-        public EventSynchronizationStrategy EventSynchronization { get; set; }
-#else // WINCE
-        internal void OnEvent<T>(EventHandler<T> handler, T e, bool synchronous) where T : System.EventArgs
-        {
-            if (handler == null)
-                return;
-            try
-            {
-                handler(this, e);
-            }
-            catch (Exception ex)
-            {
-                AddException(ex);
-            }
-        }
-#endif
         /// <summary>
         /// Gets the unique identifier of this SevenZipBase instance.
         /// </summary>
-        public int UniqueID
-        {
-            get
-            {
-                return _uniqueID;
-            }
-        }
+        public int UniqueID => _uniqueID;
 
         /// <summary>
         /// User exceptions thrown during the requested operations, for example, in events.
@@ -227,9 +139,7 @@ Dispatcher == null
 
         private static int GetUniqueID()
         {
-			//SAB: Use static field instead of numbers.
-            var newUniqueId = Interlocked.Increment(ref IncrementingUniqueId);
-            return newUniqueId;
+            return Interlocked.Increment(ref IncrementingUniqueId);
         }
 
         #region Constructors
@@ -244,7 +154,7 @@ Dispatcher == null
         }
 
         /// <summary>
-        /// Initializes a new instance of the SevenZipBase class
+        /// Initializes a new instance of the SevenZipBase class.
         /// </summary>
         /// <param name="password">The archive password.</param>
         protected SevenZipBase(string password)
@@ -259,40 +169,40 @@ Dispatcher == null
         }
         #endregion
 
-		//SAB: Remove finalizer as it is no longer needed.
-
         /// <summary>
-        /// Gets or sets the archive password
+        /// Configures a logger for this instance. Logged events include suppressed exceptions.
         /// </summary>
-        public string Password
+        /// <param name="logger">The logger to use. Pass null to disable logging.</param>
+        public void ConfigureLogging(ILogger? logger)
         {
-            get
-            {
-                return _password;
-            }
+            _logger = logger ?? NullLogger.Instance;
         }
 
         /// <summary>
-        /// Gets or sets throw exceptions on archive errors flag
+        /// Gets the logger for this instance.
         /// </summary>
-        internal bool ReportErrors
-        {
-            get
-            {
-                return _reportErrors;
-            }
-        }
+        internal ILogger Logger => _logger;
+
+        /// <summary>
+        /// Gets the archive password.
+        /// </summary>
+        /// <remarks>
+        /// SECURITY NOTE: The password is stored as a plain <see cref="string"/>. Strings in .NET are
+        /// immutable and cannot be zeroed from managed code; the password may persist in GC memory until
+        /// collected. For high-security applications, consider clearing the password after use by
+        /// setting the field to an empty string.
+        /// </remarks>
+        public string Password => _password;
+
+        /// <summary>
+        /// Gets throw exceptions on archive errors flag
+        /// </summary>
+        internal bool ReportErrors => _reportErrors;
 
         /// <summary>
         /// Gets the user exceptions thrown during the requested operations, for example, in events.
         /// </summary>
-        internal ReadOnlyCollection<Exception> Exceptions
-        {
-            get
-            {
-                return new ReadOnlyCollection<Exception>(_exceptions);
-            }
-        }
+        internal ReadOnlyCollection<Exception> Exceptions => new ReadOnlyCollection<Exception>(_exceptions);
 
         internal void AddException(Exception e)
         {
@@ -304,20 +214,14 @@ Dispatcher == null
             _exceptions.Clear();
         }
 
-        internal bool HasExceptions
-        {
-            get
-            {
-                return _exceptions.Count > 0;
-            }
-        }
+        internal bool HasExceptions => _exceptions.Count > 0;
 
         /// <summary>
-        /// Throws the specified exception when is able to.
+        /// Throws the specified exception when able to.
         /// </summary>
         /// <param name="e">The exception to throw.</param>
         /// <param name="handler">The handler responsible for the exception.</param>
-        internal bool ThrowException(CallbackBase handler, params Exception[] e)
+        internal bool ThrowException(CallbackBase? handler, params Exception[] e)
         {
             if (_reportErrors && (handler == null || !handler.Canceled))
             {
@@ -366,7 +270,6 @@ Dispatcher == null
             }
         }
 
-#if !WINCE && !MONO
         /// <summary>
         /// Changes the path to the 7-zip native library.
         /// </summary>
@@ -375,9 +278,7 @@ Dispatcher == null
         {
             SevenZipLibraryManager.SetLibraryPath(libraryPath);
         }
-#endif
 
-#if !WINCE
         /// <summary>
         /// Returns the version information of the native 7zip library.
         /// </summary>
@@ -387,25 +288,17 @@ Dispatcher == null
         {
             return SevenZipLibraryManager.GetLibraryVersion();
         }
-#endif
+
         /// <summary>
         /// Gets the current library features.
         /// </summary>
         [CLSCompliant(false)]
-        public static LibraryFeature CurrentLibraryFeatures
-        {
-            get
-            {
-                return SevenZipLibraryManager.CurrentLibraryFeatures;
-            }
-        }
+        public static LibraryFeature CurrentLibraryFeatures => SevenZipLibraryManager.CurrentLibraryFeatures;
 
         /// <summary>
         /// Determines whether the specified System.Object is equal to the current SevenZipBase.
         /// </summary>
-        /// <param name="obj">The System.Object to compare with the current SevenZipBase.</param>
-        /// <returns>true if the specified System.Object is equal to the current SevenZipBase; otherwise, false.</returns>
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             var inst = obj as SevenZipBase;
             if (inst == null)
@@ -418,7 +311,6 @@ Dispatcher == null
         /// <summary>
         /// Serves as a hash function for a particular type.
         /// </summary>
-        /// <returns> A hash code for the current SevenZipBase.</returns>
         public override int GetHashCode()
         {
             return _uniqueID;
@@ -427,7 +319,6 @@ Dispatcher == null
         /// <summary>
         /// Returns a System.String that represents the current SevenZipBase.
         /// </summary>
-        /// <returns>A System.String that represents the current SevenZipBase.</returns>
         public override string ToString()
         {
             var type = "SevenZipBase";
@@ -443,13 +334,10 @@ Dispatcher == null
         }
     }
 
-    internal class CallbackBase : MarshalByRefObject
+    internal class CallbackBase
     {
         private readonly string _password;
         private readonly bool _reportErrors;
-        /// <summary>
-        /// User exceptions thrown during the requested operations, for example, in events.
-        /// </summary>
         private readonly List<Exception> _exceptions = new List<Exception>();
 
         #region Constructors
@@ -478,15 +366,9 @@ Dispatcher == null
         #endregion
 
         /// <summary>
-        /// Gets or sets the archive password
+        /// Gets the archive password.
         /// </summary>
-        public string Password
-        {
-            get
-            {
-                return _password;
-            }
-        }
+        public string Password => _password;
 
         /// <summary>
         /// Gets or sets the value indicating whether the current procedure was cancelled.
@@ -494,26 +376,14 @@ Dispatcher == null
         public bool Canceled { get; set; }
 
         /// <summary>
-        /// Gets or sets throw exceptions on archive errors flag
+        /// Gets throw exceptions on archive errors flag.
         /// </summary>
-        public bool ReportErrors
-        {
-            get
-            {
-                return _reportErrors;
-            }
-        }
+        public bool ReportErrors => _reportErrors;
 
         /// <summary>
         /// Gets the user exceptions thrown during the requested operations, for example, in events.
         /// </summary>
-        public ReadOnlyCollection<Exception> Exceptions
-        {
-            get
-            {
-                return new ReadOnlyCollection<Exception>(_exceptions);
-            }
-        }
+        public ReadOnlyCollection<Exception> Exceptions => new ReadOnlyCollection<Exception>(_exceptions);
 
         public void AddException(Exception e)
         {
@@ -525,20 +395,12 @@ Dispatcher == null
             _exceptions.Clear();
         }
 
-        public bool HasExceptions
-        {
-            get
-            {
-                return _exceptions.Count > 0;
-            }
-        }
+        public bool HasExceptions => _exceptions.Count > 0;
 
         /// <summary>
-        /// Throws the specified exception when is able to.
+        /// Throws the specified exception when able to.
         /// </summary>
-        /// <param name="e">The exception to throw.</param>
-        /// <param name="handler">The handler responsible for the exception.</param>
-        public bool ThrowException(CallbackBase handler, params Exception[] e)
+        public bool ThrowException(CallbackBase? handler, params Exception[] e)
         {
             if (_reportErrors && (handler == null || !handler.Canceled))
             {
@@ -581,7 +443,7 @@ Dispatcher == null
         public int Index { get; set; }
 
         /// <summary>
-        /// Gets or sets file name
+        /// Gets or sets file name.
         /// </summary>
         public string FileName { get; set; }
 
@@ -596,7 +458,7 @@ Dispatcher == null
         public DateTime CreationTime { get; set; }
 
         /// <summary>
-        /// Gets or sets the file creation time.
+        /// Gets or sets the file last access time.
         /// </summary>
         public DateTime LastAccessTime { get; set; }
 
@@ -636,9 +498,7 @@ Dispatcher == null
         /// <summary>
         /// Determines whether the specified System.Object is equal to the current ArchiveFileInfo.
         /// </summary>
-        /// <param name="obj">The System.Object to compare with the current ArchiveFileInfo.</param>
-        /// <returns>true if the specified System.Object is equal to the current ArchiveFileInfo; otherwise, false.</returns>
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             return (obj is ArchiveFileInfo) ? Equals((ArchiveFileInfo)obj) : false;
         }
@@ -646,8 +506,6 @@ Dispatcher == null
         /// <summary>
         /// Determines whether the specified ArchiveFileInfo is equal to the current ArchiveFileInfo.
         /// </summary>
-        /// <param name="afi">The ArchiveFileInfo to compare with the current ArchiveFileInfo.</param>
-        /// <returns>true if the specified ArchiveFileInfo is equal to the current ArchiveFileInfo; otherwise, false.</returns>
         public bool Equals(ArchiveFileInfo afi)
         {
             return afi.Index == Index && afi.FileName == FileName;
@@ -656,7 +514,6 @@ Dispatcher == null
         /// <summary>
         /// Serves as a hash function for a particular type.
         /// </summary>
-        /// <returns> A hash code for the current ArchiveFileInfo.</returns>
         public override int GetHashCode()
         {
             return FileName.GetHashCode() ^ Index;
@@ -665,33 +522,13 @@ Dispatcher == null
         /// <summary>
         /// Returns a System.String that represents the current ArchiveFileInfo.
         /// </summary>
-        /// <returns>A System.String that represents the current ArchiveFileInfo.</returns>
         public override string ToString()
         {
             return "[" + Index.ToString(CultureInfo.CurrentCulture) + "] " + FileName;
         }
 
-        /// <summary>
-        /// Determines whether the specified ArchiveFileInfo instances are considered equal.
-        /// </summary>
-        /// <param name="afi1">The first ArchiveFileInfo to compare.</param>
-        /// <param name="afi2">The second ArchiveFileInfo to compare.</param>
-        /// <returns>true if the specified ArchiveFileInfo instances are considered equal; otherwise, false.</returns>
-        public static bool operator ==(ArchiveFileInfo afi1, ArchiveFileInfo afi2)
-        {
-            return afi1.Equals(afi2);
-        }
-
-        /// <summary>
-        /// Determines whether the specified ArchiveFileInfo instances are not considered equal.
-        /// </summary>
-        /// <param name="afi1">The first ArchiveFileInfo to compare.</param>
-        /// <param name="afi2">The second ArchiveFileInfo to compare.</param>
-        /// <returns>true if the specified ArchiveFileInfo instances are not considered equal; otherwise, false.</returns>
-        public static bool operator !=(ArchiveFileInfo afi1, ArchiveFileInfo afi2)
-        {
-            return !afi1.Equals(afi2);
-        }
+        public static bool operator ==(ArchiveFileInfo afi1, ArchiveFileInfo afi2) => afi1.Equals(afi2);
+        public static bool operator !=(ArchiveFileInfo afi1, ArchiveFileInfo afi2) => !afi1.Equals(afi2);
     }
 
     /// <summary>
@@ -712,9 +549,7 @@ Dispatcher == null
         /// <summary>
         /// Determines whether the specified System.Object is equal to the current ArchiveProperty.
         /// </summary>
-        /// <param name="obj">The System.Object to compare with the current ArchiveProperty.</param>
-        /// <returns>true if the specified System.Object is equal to the current ArchiveProperty; otherwise, false.</returns>
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             return (obj is ArchiveProperty) ? Equals((ArchiveProperty)obj) : false;
         }
@@ -722,17 +557,14 @@ Dispatcher == null
         /// <summary>
         /// Determines whether the specified ArchiveProperty is equal to the current ArchiveProperty.
         /// </summary>
-        /// <param name="afi">The ArchiveProperty to compare with the current ArchiveProperty.</param>
-        /// <returns>true if the specified ArchiveProperty is equal to the current ArchiveProperty; otherwise, false.</returns>
         public bool Equals(ArchiveProperty afi)
         {
             return afi.Name == Name && afi.Value == Value;
         }
 
         /// <summary>
-        ///  Serves as a hash function for a particular type.
+        /// Serves as a hash function for a particular type.
         /// </summary>
-        /// <returns> A hash code for the current ArchiveProperty.</returns>
         public override int GetHashCode()
         {
             return Name.GetHashCode() ^ Value.GetHashCode();
@@ -741,33 +573,13 @@ Dispatcher == null
         /// <summary>
         /// Returns a System.String that represents the current ArchiveProperty.
         /// </summary>
-        /// <returns>A System.String that represents the current ArchiveProperty.</returns>
         public override string ToString()
         {
             return Name + " = " + Value;
         }
 
-        /// <summary>
-        /// Determines whether the specified ArchiveProperty instances are considered equal.
-        /// </summary>
-        /// <param name="afi1">The first ArchiveProperty to compare.</param>
-        /// <param name="afi2">The second ArchiveProperty to compare.</param>
-        /// <returns>true if the specified ArchiveProperty instances are considered equal; otherwise, false.</returns>
-        public static bool operator ==(ArchiveProperty afi1, ArchiveProperty afi2)
-        {
-            return afi1.Equals(afi2);
-        }
-
-        /// <summary>
-        /// Determines whether the specified ArchiveProperty instances are not considered equal.
-        /// </summary>
-        /// <param name="afi1">The first ArchiveProperty to compare.</param>
-        /// <param name="afi2">The second ArchiveProperty to compare.</param>
-        /// <returns>true if the specified ArchiveProperty instances are not considered equal; otherwise, false.</returns>
-        public static bool operator !=(ArchiveProperty afi1, ArchiveProperty afi2)
-        {
-            return !afi1.Equals(afi2);
-        }
+        public static bool operator ==(ArchiveProperty afi1, ArchiveProperty afi2) => afi1.Equals(afi2);
+        public static bool operator !=(ArchiveProperty afi1, ArchiveProperty afi2) => !afi1.Equals(afi2);
     }
 
 #if COMPRESS
@@ -833,10 +645,8 @@ Dispatcher == null
     {
         public uint FilesCount;
         public InternalCompressionMode Mode;
-
-        public Dictionary<int, string> FileNamesToModify { get; set; }
-
-        public List<ArchiveFileInfo> ArchiveFileData { get; set; }
+        public Dictionary<int, string>? FileNamesToModify { get; set; }
+        public List<ArchiveFileInfo>? ArchiveFileData { get; set; }
     }
 #endif
 #endif

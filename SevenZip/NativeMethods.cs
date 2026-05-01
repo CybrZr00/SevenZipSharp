@@ -16,16 +16,12 @@
 
 using System;
 using System.Runtime.InteropServices;
-#if MONO
-using SevenZip.Mono.COM;
-#endif
 
 namespace SevenZip
 {
 #if UNMANAGED
     internal static class NativeMethods
     {
-        #if !WINCE && !MONO
         #region Delegates
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
@@ -45,18 +41,10 @@ namespace SevenZip
 
         [DllImport("kernel32.dll", BestFitMapping = false, ThrowOnUnmappableChar = true)]
         public static extern IntPtr GetProcAddress(IntPtr hModule, [MarshalAs(UnmanagedType.LPStr)] string procName);
-		#endif
-		
-		#if WINCE
-        [DllImport("7z.dll", EntryPoint="CreateObject")]
-        public static extern int CreateCOMObject(
-            [In] ref Guid classID,
-            [In] ref Guid interfaceID,
-            [MarshalAs(UnmanagedType.Interface)] out object outObject);	
-		#endif
+
         public static DateTime SafeDateCast(PropVariant var)
         {
-            object obj;
+            object? obj;
             try
             {
                 obj = var.Object;
@@ -65,16 +53,16 @@ namespace SevenZip
             {
                 return DateTime.Now;
             }
-            if (obj != null && obj is DateTime)
+            if (obj is DateTime dt)
             {
-                return (DateTime) obj;
+                return dt;
             }
             return DateTime.Now;
         }
 
         public static T SafeCast<T>(PropVariant var, T def)
         {
-            object obj;
+            object? obj;
             try
             {
                 obj = var.Object;
@@ -83,10 +71,10 @@ namespace SevenZip
             {
                 return def;
             }
-            if (obj != null && obj is T)
+            if (obj is T value)
             {
-                return (T) obj;
-            }            
+                return value;
+            }
             return def;
         }
     }

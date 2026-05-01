@@ -379,7 +379,9 @@ namespace SevenZip
                 {InArchiveFormat.PE,        new Guid("23170f69-40c1-278a-1000-000110DD0000")},
                 {InArchiveFormat.Elf,       new Guid("23170f69-40c1-278a-1000-000110DE0000")},
                 {InArchiveFormat.Swf,       new Guid("23170f69-40c1-278a-1000-000110D70000")},
-                {InArchiveFormat.Vhd,       new Guid("23170f69-40c1-278a-1000-000110DC0000")}
+                {InArchiveFormat.Vhd,       new Guid("23170f69-40c1-278a-1000-000110DC0000")},
+                {InArchiveFormat.Flv,       new Guid("23170f69-40c1-278a-1000-000110D60000")},
+                {InArchiveFormat.Msi,       new Guid("23170f69-40c1-278a-1000-000110DB0000")}
             };
 
             #endregion
